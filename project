@@ -1,0 +1,187 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.naive_bayes import GaussianNB
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+
+np.random.seed(42)
+sns.set_theme(style="whitegrid")
+
+N = 1000
+N_SIMULATIONS = 100
+DISTRIBUTIONS = ["Normal", "Uniform", "Exponential"]
+CLASSIFIERS = {
+    "Gaussian Naive Bayes": GaussianNB(),
+    "Linear Discriminant Analysis": LinearDiscriminantAnalysis(),
+    "Quadratic Discriminant Analysis": QuadraticDiscriminantAnalysis(),
+    "K-Nearest Neighbors": KNeighborsClassifier(n_neighbors=5),
+    "Support Vector Machine": SVC(kernel="rbf", C=1.0)
+}
+
+def generate_distribution_data(distribution, n):
+    if distribution == "Normal":
+        x1 = np.random.normal(0, 1, n)
+        x2 = np.random.normal(2, 1.2, n)
+    elif distribution == "Uniform":
+        x1 = np.random.uniform(-2, 2, n)
+        x2 = np.random.uniform(0, 4, n)
+    else:
+        x1 = np.random.exponential(1, n)
+        x2 = np.random.exponential(1.5, n) + 1.5
+
+    return x1, x2
+
+def generate_dataset(distribution, n):
+    x1a, x1b = generate_distribution_data(distribution, n)
+    x2a, x2b = generate_distribution_data(distribution, n)
+
+    class_0 = np.column_stack((x1a, x2a))
+    class_1 = np.column_stack((x1b, x2b))
+
+    X = np.vstack((class_0, class_1))
+    y = np.concatenate((np.zeros(n), np.ones(n))).astype(int)
+
+    return X, y
+
+distribution_samples = {}
+
+fig, axes = plt.subplots(1, 3, figsize=(17, 4))
+
+for ax, distribution in zip(axes, DISTRIBUTIONS):
+    X, y = generate_dataset(distribution, 150)
+    distribution_samples[distribution] = (X, y)
+    ax.scatter(X[y == 0, 0], X[y == 0, 1], alpha=0.65, label="Class 0", s=20)
+    ax.scatter(X[y == 1, 0], X[y == 1, 1], alpha=0.65, label="Class 1", s=20)
+    ax.set_title(f"{distribution} Distribution")
+    ax.set_xlabel("Feature 1")
+    ax.set_ylabel("Feature 2")
+    ax.legend()
+
+plt.suptitle("Monte Carlo Random Variable Generation")
+plt.tight_layout()
+plt.show()
+
+results = []
+simulation_details = []
+
+for distribution in DISTRIBUTIONS:
+    for simulation in range(N_SIMULATIONS):
+        X, y = generate_dataset(distribution, N // 2)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.3, random_state=simulation, stratify=y
+        )
+
+        for classifier_name, classifier in CLASSIFIERS.items():
+            model = make_pipeline(StandardScaler(), classifier.__class__(**classifier.get_params()))
+            model.fit(X_train, y_train)
+            predictions = model.predict(X_test)
+
+            accuracy = accuracy_score(y_test, predictions)
+            precision = precision_score(y_test, predictions, zero_division=0)
+            recall = recall_score(y_test, predictions, zero_division=0)
+            f1 = f1_score(y_test, predictions, zero_division=0)
+
+            results.append({
+                "Distribution": distribution,
+                "Simulation": simulation + 1,
+                "Classifier": classifier_name,
+                "Accuracy": accuracy,
+                "Precision": precision,
+                "Recall": recall,
+                "F1 Score": f1
+            })
+
+results_df = pd.DataFrame(results)
+
+summary = results_df.groupby(["Distribution", "Classifier"])[
+    ["Accuracy", "Precision", "Recall", "F1 Score"]
+].agg(["mean", "std"]).round(4)
+
+print("MONTE CARLO CLASSIFIER PERFORMANCE")
+print("=" * 80)
+print(summary.to_string())
+
+mean_accuracy = results_df.groupby(["Distribution", "Classifier"])["Accuracy"].mean().reset_index()
+
+plt.figure(figsize=(14, 6))
+sns.barplot(data=mean_accuracy, x="Distribution", y="Accuracy", hue="Classifier")
+plt.title("Average Classification Accuracy Across Probability Distributions")
+plt.ylim(0, 1.05)
+plt.ylabel("Mean Accuracy")
+plt.xlabel("Probability Distribution")
+plt.legend(title="Classifier", bbox_to_anchor=(1.02, 1), loc="upper left")
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(14, 6))
+sns.boxplot(data=results_df, x="Distribution", y="Accuracy", hue="Classifier")
+plt.title("Monte Carlo Simulation: Distribution of Classifier Accuracy")
+plt.ylabel("Accuracy")
+plt.xlabel("Probability Distribution")
+plt.legend(title="Classifier", bbox_to_anchor=(1.02, 1), loc="upper left")
+plt.tight_layout()
+plt.show()
+
+best_models = mean_accuracy.loc[mean_accuracy.groupby("Distribution")["Accuracy"].idxmax()]
+
+print("\nBEST CLASSIFIER FOR EACH DISTRIBUTION")
+print("=" * 60)
+print(best_models.to_string(index=False))
+
+best_overall = results_df.groupby("Classifier")["Accuracy"].mean().sort_values(ascending=False)
+
+print("\nOVERALL CLASSIFIER RANKING")
+print("=" * 60)
+print(best_overall.round(4).to_string())
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+for ax, distribution in zip(axes, DISTRIBUTIONS):
+    subset = results_df[results_df["Distribution"] == distribution]
+    best_classifier_name = subset.groupby("Classifier")["Accuracy"].mean().idxmax()
+
+    X, y = generate_dataset(distribution, 1500)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y
+    )
+
+    base_classifier = CLASSIFIERS[best_classifier_name]
+    model = make_pipeline(
+        StandardScaler(),
+        base_classifier.__class__(**base_classifier.get_params())
+    )
+    model.fit(X_train, y_train)
+    predictions = model.predict(X_test)
+
+    cm = confusion_matrix(y_test, predictions)
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+    ax.set_title(f"{distribution}\n{best_classifier_name}")
+    ax.set_xlabel("Predicted Class")
+    ax.set_ylabel("Actual Class")
+
+plt.suptitle("Confusion Matrices for Best Classifiers")
+plt.tight_layout()
+plt.show()
+
+print("\nFINAL PROJECT OBSERVATIONS")
+print("=" * 60)
+
+for distribution in DISTRIBUTIONS:
+    subset = mean_accuracy[mean_accuracy["Distribution"] == distribution]
+    winner = subset.loc[subset["Accuracy"].idxmax()]
+    print(
+        f"{distribution}: Best classifier = {winner['Classifier']}, "
+        f"Mean Accuracy = {winner['Accuracy']:.4f}"
+    )
+
+print(
+    "\nThe experiment demonstrates how probability distributions influence "
+    "classification accuracy, precision, recall, F1 score, and classifier stability."
+)
